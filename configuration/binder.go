@@ -26,22 +26,27 @@ func after(value string, a string) string {
 	if adjustedPos >= len(value) {
 		return ""
 	}
-	return value[adjustedPos:len(value)]
+	return value[adjustedPos:]
 }
 
 func expand(mapping map[string]interface{}, key string, value interface{}) {
 	if strings.Contains(key, separatorPattern) {
 		currentKey := strings.Split(key, separatorPattern)[0]
 		if innerMap, ok := (mapping[currentKey]).(map[string]interface{}); ok {
-			expand(innerMap, after(key, separatorPattern), value)
+			expand(innerMap, substring(key, separatorPattern), value)
 		} else {
 			innerMap := make(map[string]interface{})
 			mapping[currentKey] = innerMap
-			expand(innerMap, after(key, separatorPattern), value)
+			expand(innerMap, substring(key, separatorPattern), value)
 		}
 	} else {
 		mapping[key] = value
 	}
+}
+
+func substring(value string, delimeter string) string {
+	index := strings.Index(value, delimeter)
+	return value[index+1:]
 }
 
 func getEnvironment() map[string]string {
