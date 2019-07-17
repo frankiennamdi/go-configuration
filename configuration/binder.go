@@ -2,7 +2,10 @@ package configuration
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"reflect"
+	"strconv"
 	"strings"
 )
 
@@ -71,4 +74,58 @@ func Bind(mapping map[string]string, configInterface interface{}) (err error) {
 func BindEnvironment(configInterface interface{}) (err error) {
 	err = Bind(getEnvironment(), configInterface)
 	return
+}
+
+// InitializeConfig initialize config using the config tag
+func InitializeConfig(mapping map[string]string, config interface{}) error {
+	expandedMapping := ExpandMap(mapping)
+	err := bindConfig(expandedMapping, config)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// BindConfig with data tag
+func bindConfig(data map[string]interface{}, a interface{}) error {
+	elementValue := reflect.ValueOf(a).Elem()
+	elementType := reflect.TypeOf(a).Elem()
+
+	for j := 0; j < elementValue.NumField(); j++ {
+		field := elementValue.Field(j)
+		fieldType := elementType.Field(j)
+		configTag := elementValue.Type().Field(j).Tag.Get("config")
+		if configTag == "" {
+			return fmt.Errorf("no config tag")
+		}
+		value, ok := data[configTag]
+		if !ok {
+			return fmt.Errorf("no value found for config tag %s", configTag)
+		}
+		switch fieldType.Type.Kind() {
+		case reflect.Bool:
+			value, err := strconv.ParseBool(fmt.Sprint(value))
+			if err != nil {
+				return err
+			}
+			field.SetBool(value)
+		case reflect.Struct:
+			entry, ok := value.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("value for kind struct must be map[string]interface{}")
+			}
+
+			ptr := reflect.PtrTo(elementValue.Type().Field(j).Type)
+			structure := reflect.New(ptr.Elem())
+			field.Set(structure.Elem())
+			err := bindConfig(entry, structure.Interface())
+			if err != nil {
+				return err
+			}
+			field.Set(structure.Elem())
+		default:
+			field.SetString(fmt.Sprint(value))
+		}
+	}
+	return nil
 }
