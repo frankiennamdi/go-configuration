@@ -1,0 +1,2 @@
+Simple Go Configuration For Reading Yaml File And binds them to Struct. Currently does not support 
+Pointer types. It supports bool, string and int. Future improvements can be made to support more complex types.

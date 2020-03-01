@@ -100,6 +100,9 @@ func (binder *Binder) bindConfig(data map[interface{}]interface{}, a interface{}
 
 	for j := 0; j < elementValue.NumField(); j++ {
 		field := elementValue.Field(j)
+		if !field.IsValid() && !field.CanSet() {
+			continue
+		}
 		fieldType := elementType.Field(j)
 		configTag := elementValue.Type().Field(j).Tag.Get("config")
 		if configTag == "" {
@@ -123,7 +126,7 @@ func (binder *Binder) bindConfig(data map[interface{}]interface{}, a interface{}
 		case reflect.Struct:
 			entry, ok := value.(map[interface{}]interface{})
 			if !ok {
-				return fmt.Errorf("value for kind struct must be map[string]interface{}")
+				return fmt.Errorf("value: %+v for kind struct must be map[interface{}]interface{}", value)
 			}
 
 			ptr := reflect.PtrTo(elementValue.Type().Field(j).Type)
@@ -134,12 +137,24 @@ func (binder *Binder) bindConfig(data map[interface{}]interface{}, a interface{}
 				return err
 			}
 			field.Set(structure.Elem())
-		default:
+		case reflect.Int:
+			newValue, err := binder.expandValue(value)
+			if err != nil {
+				return err
+			}
+			value, err := strconv.ParseInt(fmt.Sprint(newValue), 0, 0)
+			if err != nil {
+				return err
+			}
+			field.SetInt(value)
+		case reflect.String:
 			newValue, err := binder.expandValue(value)
 			if err != nil {
 				return err
 			}
 			field.SetString(fmt.Sprint(newValue))
+		default:
+			return fmt.Errorf("value: %+v for kind not supported yet", value)
 		}
 	}
 	return nil

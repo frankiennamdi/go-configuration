@@ -14,6 +14,7 @@ import (
 type Server struct {
 	Host string `config:"host"`
 	Port string `config:"port"`
+	Count int `config:"count"`
 }
 
 type Config struct {
@@ -48,6 +49,7 @@ func TestBindConfigFromYaml_With_No_Defaults(t *testing.T) {
 	fmt.Printf("%+v\n", config)
 	assert.Equal(t, config.Server.Host, "localhost")
 	assert.Equal(t, config.Server.Port, "9002")
+	assert.Equal(t, config.Server.Count, 1)
 }
 
 func TestBindConfigFromYaml_With_No_Defaults_Fails_When_Env_Missing(t *testing.T) {
@@ -70,6 +72,7 @@ func TestBindConfigFromYaml_With_Defaults(t *testing.T) {
 	fmt.Printf("%+v\n", config)
 	assert.Equal(t, config.Server.Host, "127.0.0.1")
 	assert.Equal(t, config.Server.Port, "5000")
+	assert.Equal(t, config.Server.Count, 1)
 }
 
 func unsetEnv(key string) {
