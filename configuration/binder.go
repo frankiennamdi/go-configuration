@@ -3,52 +3,50 @@ package configuration
 import (
 	"encoding/json"
 	"fmt"
+	"gopkg.in/yaml.v2"
 	"os"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 )
 
 const separatorPattern string = "_"
 
+type Binder struct {
+	expandableValuePattern *regexp.Regexp
+}
+
+func New() *Binder {
+	return &Binder{expandableValuePattern: regexp.MustCompile(`\${(?P<variable>.*?)((:-?)(?P<default>.*?))?}`)}
+}
+
 // ExpandMap expands the map: ENV_PROPERTY_VALUE => {"ENV" : { "PROPERTY" : "VALUE"}}
-func ExpandMap(mappings map[string]string) map[string]interface{} {
+func (binder *Binder) ExpandMap(mappings map[string]string) map[string]interface{} {
 	expandedMap := make(map[string]interface{})
 	for key, value := range mappings {
-		expand(expandedMap, key, value)
+		binder.expand(expandedMap, key, value)
 	}
 	return expandedMap
 }
 
-func after(value string, a string) string {
-	pos := strings.LastIndex(value, a)
-	if pos == -1 {
-		return ""
-	}
-	adjustedPos := pos + len(a)
-	if adjustedPos >= len(value) {
-		return ""
-	}
-	return value[adjustedPos:]
-}
-
-func expand(mapping map[string]interface{}, key string, value interface{}) {
+func (binder *Binder) expand(mapping map[string]interface{}, key string, value interface{}) {
 	if strings.Contains(key, separatorPattern) {
 		currentKey := strings.Split(key, separatorPattern)[0]
 		if innerMap, ok := (mapping[currentKey]).(map[string]interface{}); ok {
-			expand(innerMap, substring(key, separatorPattern), value)
+			binder.expand(innerMap, substring(key, separatorPattern), value)
 		} else {
 			innerMap := make(map[string]interface{})
 			mapping[currentKey] = innerMap
-			expand(innerMap, substring(key, separatorPattern), value)
+			binder.expand(innerMap, substring(key, separatorPattern), value)
 		}
 	} else {
 		mapping[key] = value
 	}
 }
 
-func substring(value string, delimeter string) string {
-	index := strings.Index(value, delimeter)
+func substring(value string, delimiter string) string {
+	index := strings.Index(value, delimiter)
 	return value[index+1:]
 }
 
@@ -63,31 +61,40 @@ func getEnvironment() map[string]string {
 }
 
 // Bind the mapping to the configInterface
-func Bind(mapping map[string]string, configInterface interface{}) (err error) {
-	expandedMapping := ExpandMap(mapping)
-	data, err := json.Marshal(expandedMapping)
-	json.Unmarshal(data, configInterface)
-	return
-}
-
-// BindEnvironment the configInterface to the environment variables
-func BindEnvironment(configInterface interface{}) (err error) {
-	err = Bind(getEnvironment(), configInterface)
-	return
-}
-
-// InitializeConfig initialize config using the config tag
-func InitializeConfig(mapping map[string]string, config interface{}) error {
-	expandedMapping := ExpandMap(mapping)
-	err := bindConfig(expandedMapping, config)
-	if err != nil {
-		return err
+func (binder *Binder) Bind(mapping map[string]string, configInterface interface{}) error {
+	expandedMapping := binder.ExpandMap(mapping)
+	data, marshalErr := json.Marshal(expandedMapping)
+	if marshalErr != nil {
+		return marshalErr
+	}
+	unmarshalErr := json.Unmarshal(data, configInterface)
+	if unmarshalErr != nil {
+		return unmarshalErr
 	}
 	return nil
 }
 
-// BindConfig with data tag
-func bindConfig(data map[string]interface{}, a interface{}) error {
+// BindEnvironment the configInterface to the environment variables
+func (binder *Binder) BindEnvironment(configInterface interface{}) (err error) {
+	err = binder.Bind(getEnvironment(), configInterface)
+	return
+}
+
+func (binder *Binder) InitializeConfigFromYaml(yamlData []byte, config interface{}) error {
+	dataMap := make(map[interface{}]interface{})
+	err := yaml.Unmarshal(yamlData, &dataMap)
+	if err != nil {
+		return err
+	}
+	bindErr := binder.bindConfig(dataMap, config)
+	if bindErr != nil {
+		return bindErr
+	}
+	return nil
+}
+
+// BindConfig with config tag
+func (binder *Binder) bindConfig(data map[interface{}]interface{}, a interface{}) error {
 	elementValue := reflect.ValueOf(a).Elem()
 	elementType := reflect.TypeOf(a).Elem()
 
@@ -104,13 +111,17 @@ func bindConfig(data map[string]interface{}, a interface{}) error {
 		}
 		switch fieldType.Type.Kind() {
 		case reflect.Bool:
-			value, err := strconv.ParseBool(fmt.Sprint(value))
+			newValue, err := binder.expandValue(value)
+			if err != nil {
+				return err
+			}
+			value, err := strconv.ParseBool(fmt.Sprint(newValue))
 			if err != nil {
 				return err
 			}
 			field.SetBool(value)
 		case reflect.Struct:
-			entry, ok := value.(map[string]interface{})
+			entry, ok := value.(map[interface{}]interface{})
 			if !ok {
 				return fmt.Errorf("value for kind struct must be map[string]interface{}")
 			}
@@ -118,14 +129,55 @@ func bindConfig(data map[string]interface{}, a interface{}) error {
 			ptr := reflect.PtrTo(elementValue.Type().Field(j).Type)
 			structure := reflect.New(ptr.Elem())
 			field.Set(structure.Elem())
-			err := bindConfig(entry, structure.Interface())
+			err := binder.bindConfig(entry, structure.Interface())
 			if err != nil {
 				return err
 			}
 			field.Set(structure.Elem())
 		default:
-			field.SetString(fmt.Sprint(value))
+			newValue, err := binder.expandValue(value)
+			if err != nil {
+				return err
+			}
+			field.SetString(fmt.Sprint(newValue))
 		}
 	}
 	return nil
+}
+
+func (binder *Binder) expandValue(value interface{}) (interface{}, error) {
+	valueStr := fmt.Sprint(value)
+	match := binder.expandableValuePattern.FindStringSubmatch(valueStr)
+	if len(match) > 0 {
+		result := make(map[string]string)
+		matches := binder.expandableValuePattern.FindStringSubmatch(valueStr)
+		names := binder.expandableValuePattern.SubexpNames()
+		for i, match := range matches {
+			if i != 0 {
+				result[names[i]] = match
+			}
+		}
+		variable := ""
+		defaultValue := ""
+		if resultValue, found := result["variable"]; found {
+			variable = resultValue
+		}
+		if resultValue, found := result["default"]; found {
+			defaultValue = resultValue
+		}
+		newValue := binder.getEnvironmentValue(variable, defaultValue)
+		if newValue == "" {
+			return nil, fmt.Errorf("enviornment value is missing for environment variable %s", variable)
+		}
+		return newValue, nil
+	} else {
+		return value, nil
+	}
+}
+
+func (binder *Binder) getEnvironmentValue(key, defaultValue string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return defaultValue
 }
