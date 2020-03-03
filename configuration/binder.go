@@ -137,6 +137,16 @@ func (binder *Binder) bindConfig(data map[interface{}]interface{}, a interface{}
 				return err
 			}
 			field.Set(structure.Elem())
+		case reflect.Float64:
+			newValue, err := binder.expandValue(value)
+			if err != nil {
+				return err
+			}
+			value, err := strconv.ParseFloat(fmt.Sprint(newValue), 64)
+			if err != nil {
+				return err
+			}
+			field.SetFloat(value)
 		case reflect.Int:
 			newValue, err := binder.expandValue(value)
 			if err != nil {
